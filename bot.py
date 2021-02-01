@@ -1,82 +1,73 @@
 import random
 
-import requests
-
-from settings import SERVICE_URL, MAX_POSTS_PER_USER, MAX_LIKES_PER_USER, NUMBER_OF_USERS
+from helpers import make_request, like_post
+from settings import MAX_POSTS_PER_USER, MAX_LIKES_PER_USER, NUMBER_OF_USERS
 from faker import Faker
 
 fake = Faker()
 
 
-def make_request(method: str, service: str, params: dict = None, data: dict = None, item_id: int = None,
-                 headers: dict = None):
-    response = requests.request(method,
-                                f"{SERVICE_URL}/api/v1/{service}/{item_id}",
-                                headers=headers,
-                                params=params,
-                                data=data,
-                                )
-    if response.status_code not in [200, 201]:
-        raise requests.exceptions.HTTPError
-
-
 class BotActions:
-    def __init__(self):
-        self.users = {}
-        self.posts = []
+    def __init__(self, number_of_users: int, max_posts_per_user: int, max_likes_per_user: int):
+        self.number_of_users = number_of_users
+        self.max_likes_per_user = max_likes_per_user
+        self.max_posts_per_user = max_posts_per_user
+        self.users = dict()
+        self.posts = dict()
 
-    def create_fake_users(self, number: int):
-        for _ in range(number):
+    def generate_users_data(self):
+        """Populate self.users with generated fake user data in amount of passed number_of_users value"""
+        for _ in range(self.number_of_users):
             self.users[fake.profile()['username']] = {'email': fake.email(), 'password': fake.password()}
 
     def signup_users(self):
-        """signup created_users (number provided in config)"""
+        """Signup users from self.users"""
         for username, user_data in self.users.items():
             make_request(method='post', service='account', data={'username': username,
-                                                                 'email': user_data['mail'],
+                                                                 'email': user_data['email'],
                                                                  'password': user_data['password']})
-            # res = requests.post(f"{SERVICE_URL}/api/v1/account/", data={'username': user['username'],
-            #                                                             'email': user['mail'],
-            #                                                             'password': user['ssn']})
-            # if res.status_code != 201:
-            #     raise Exception(res.status_code)
 
     def authenticate_users(self):
+        """Authenticate previously signed up users"""
         for username, user_data in self.users.items():
-            auth_data = requests.post(f"{SERVICE_URL}/api/v1/token/", data={'username': username,
-                                                                            'password': user_data['password']})
+            auth_data = make_request('post', 'token', data={'username': username, 'password': user_data['password']})
             self.users[username].update(auth_data)
 
-    def create_posts(self, max_posts_per_user: int):
-        """each user creates random number of created_posts with any content
-         (up to max_posts_per_user)"""
-        for user_data in self.users.values():
-            for _ in range(random.randint(1, max_posts_per_user)):
-                post_data = make_request(method='post',
-                                         service='post',
-                                         headers={'Authorization': f"Bearer {user_data['access']}"})
-                # post = requests.post(f"{SERVICE_URL}/api/v1/post/",
-                #                      headers={'Authorization': f"Bearer {auth.json()['access']}"},
-                #                      data={'title': user['username'], 'description': user['job'],
-                #                            'text': user['company']})
-                # if post.status_code == 201:
-                #     self.posts.append(post.json())
+    def create_users(self):
+        """Generate, signup and authenticate users, all this actions will update self.users"""
+        self.generate_users_data()
+        self.signup_users()
+        self.authenticate_users()
 
-    def like_posts(users: list, posts: list):
+    def create_posts(self,):
+        """Create posts for each user in self.users in amount of value set in self.max_posts_per_user"""
+        for user_data in self.users.values():
+            for _ in range(random.randint(1, self.max_posts_per_user)):
+                self.create_post(user_data['access'])
+
+    def create_post(self, access_key):
+        """Fake title, description, and text for post creation. """
+        text = fake.text()
+        post_data = make_request(method='post',
+                                 service='post',
+                                 headers={'Authorization': f"Bearer {access_key}"},
+                                 data={'title': ' '.join(text.split(' ')[:10]),
+                                       'description': ' '.join(text.split(' ')[:20]),
+                                       'text': text})
+        post_id = post_data.pop('id')
+        self.posts[post_id] = post_data
+
+    def like_posts(self):
         """After creating the signup and posting activity,
          created_posts should be liked randomly,
          created_posts can be liked multiple times"""
-
-        for user in users:
-            auth = requests.post(f"{SERVICE_URL}/api/v1/token/", data={'username': user['username'],
-                                                                       'password': user['ssn']})
-            for _ in range(random.randint(1, MAX_LIKES_PER_USER)):
-                requests.patch(f"{SERVICE_URL}/api/v1/post/{random.choice(posts)['id']}/",
-                               headers={'Authorization': f"Bearer {auth.json()['access']}"},
-                               data={'is_like': 'true'})
+        for user in self.users.values():
+            for _ in range(random.randint(1, self.max_likes_per_user)):
+                like_post(user['access'], random.choice(list(self.posts.keys())))
 
 
 if __name__ == '__main__':
-    created_users = signup_users()
-    created_posts = create_posts(created_users)
-    like_posts(created_users, created_posts)
+    bot = BotActions(NUMBER_OF_USERS, MAX_POSTS_PER_USER, MAX_LIKES_PER_USER)
+    bot.create_users()
+    bot.create_posts()
+    bot.like_posts()
